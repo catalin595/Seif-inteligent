@@ -1,0 +1,258 @@
+import lgpio
+import time
+import serial
+import smbus
+import mysql.connector
+from datetime import datetime
+from gpiozero import AngularServo
+from gpiozero import PWMLED, Buzzer
+# --- CONFIGURARE PINI --- #
+ROWS = [23, 24, 25, 8]  # Tastatura (BCM pins)
+COLS = [7, 10, 19, 26]
+KEYS = [
+    ['1', '2', '3', 'A'],
+    ['4', '5', '6', 'B'],
+    ['7', '8', '9', 'C'],
+    ['*', '0', '#', 'D']
+]
+SERVO_PIN = 18  # BCM pin pentru servo SG90
+ARDUINO_PORT = '/dev/ttyUSB0'
+#--Configurare led si buzzer--#
+red = PWMLED(13)    # GPIO13 - pin 33
+green = PWMLED(27)  # GPIO27 - pin 13
+blue = PWMLED(22)   # GPIO22 - pin 15
+
+buzzer = Buzzer(17) # GPIO17 - pin 11
+
+# --- CONFIGURARE LCD --- #
+I2C_ADDR = 0x27
+LCD_WIDTH = 16
+LCD_CHR = 1
+LCD_CMD = 0
+LCD_LINE_1 = 0x80
+LCD_LINE_2 = 0xC0
+ENABLE = 0b00000100
+BACKLIGHT = 0b00001000
+E_PULSE = 0.0005
+E_DELAY = 0.0005
+bus = smbus.SMBus(1)
+
+# --- Conectare la baza de date --- #
+db = mysql.connector.connect(
+    host="localhost",
+    user="root",       # <-- inlocuieste cu userul tau
+    password="1234",       # <-- inlocuieste cu parola ta
+    database="seif_access"
+)
+cursor = db.cursor(buffered=True)
+
+# --- Functii DB --- #
+def log_event(card_uid, event_type, details):
+    cursor.execute(
+        "INSERT INTO activity_log (event_time, card_uid, event_type, details) VALUES (%s, %s, %s, %s)",
+        (datetime.now(), card_uid, event_type, details)
+    )
+    db.commit()
+
+def check_uid_in_db(uid):
+    cursor.execute("SELECT allowed, owner_name FROM rfid_cards WHERE REPLACE(card_uid, ':', '') = %s", (uid,))
+    return cursor.fetchone()
+
+# --- LCD --- #
+def lcd_write(bits, mode):
+    bits_high = mode | (bits & 0xF0) | BACKLIGHT
+    bits_low = mode | ((bits << 4) & 0xF0) | BACKLIGHT
+    bus.write_byte(I2C_ADDR, bits_high)
+    lcd_toggle_enable(bits_high)
+    bus.write_byte(I2C_ADDR, bits_low)
+    lcd_toggle_enable(bits_low)
+
+def lcd_toggle_enable(bits):
+    time.sleep(E_DELAY)
+    bus.write_byte(I2C_ADDR, (bits | ENABLE))
+    time.sleep(E_PULSE)
+    bus.write_byte(I2C_ADDR, (bits & ~ENABLE))
+    time.sleep(E_DELAY)
+
+def lcd_init():
+    lcd_write(0x33, LCD_CMD)
+    lcd_write(0x32, LCD_CMD)
+    lcd_write(0x06, LCD_CMD)
+    lcd_write(0x0C, LCD_CMD)
+    lcd_write(0x28, LCD_CMD)
+    lcd_write(0x01, LCD_CMD)
+    time.sleep(E_DELAY)
+def lcd_message(message, line, delay=0):
+    lcd_write(LCD_LINE_1 if line == 1 else LCD_LINE_2, LCD_CMD)
+    message = message.ljust(LCD_WIDTH)
+    for char in message:
+        lcd_write(ord(char), LCD_CHR)
+    if delay > 0:
+        time.sleep(delay)
+
+# --- TASTATURA --- #
+h = lgpio.gpiochip_open(0)
+for row in ROWS:
+    lgpio.gpio_claim_output(h, row, 0)
+for col in COLS:
+    lgpio.gpio_claim_input(h, col, lgpio.SET_PULL_DOWN)
+
+def read_keypad():
+    for i, row in enumerate(ROWS):
+        lgpio.gpio_write(h, row, 1)
+        for j, col in enumerate(COLS):
+            if lgpio.gpio_read(h, col):
+                lgpio.gpio_write(h, row, 0)
+                return KEYS[i][j]
+        lgpio.gpio_write(h, row, 0)
+    return None
+
+def read_keypad_pin():
+    pin = ""
+    lcd_message("Introdu PIN:", 1)
+    lcd_message("____", 2)
+    while True:
+        key = read_keypad()
+        if key:
+            time.sleep(0.2)
+            if key.isdigit():
+                pin += key
+                lcd_message(pin.ljust(4, '_'), 2)
+                if len(pin) == 4:
+                    return pin
+            elif key == '*':
+                pin = ""
+                lcd_message("____", 2)
+            elif key == '#':
+                return pin
+
+# --- SERVO --- #
+servo = AngularServo(
+    SERVO_PIN,
+    min_angle=0,
+    max_angle=180,
+    min_pulse_width=0.0006,
+    max_pulse_width=0.0024,
+    frame_width=0.02
+)
+def acces_permis_feedback():
+    green.value = 1
+    for _ in range(3):
+        buzzer.on()
+        time.sleep(0.2)
+        buzzer.off()
+        time.sleep(0.2)
+    green.off()
+
+def acces_refuzat_feedback():
+    red.value = 1
+    buzzer.on()
+    time.sleep(0.5)
+    buzzer.off()
+    red.off()
+def set_angle(angle):
+    servo.angle = angle
+    time.sleep(1)
+
+# --- RFID --- #
+arduino = serial.Serial(ARDUINO_PORT, 9600, timeout=1)
+arduino.flush()
+def read_rfid():
+    arduino.reset_input_buffer()
+    time.sleep(0.1)
+lcd_message("Astept RFID...", 1)
+    lcd_message(" ", 2)
+    start_time = time.time()
+    while time.time() - start_time < 5:
+        if arduino.in_waiting > 0:
+            uid_raw = arduino.readline().decode('utf-8').strip()
+            if "Card UID:" in uid_raw:
+                uid_clean = uid_raw.replace("Card UID:", "").strip().replace(":", "").upper()
+                return uid_clean
+    lcd_message("Timeout RFID!", 1)
+    return None
+
+# --- INITIALIZARE --- #
+lcd_init()
+lcd_message("Sistem pornit", 1, delay=1)
+lcd_message("Introdu PIN:", 2)
+
+# --- LOOP PRINCIPAL --- #
+set_angle(145)
+motor_open = False
+try:
+    motor_open = False
+
+    while True:
+        if not motor_open:
+            pin = read_keypad_pin()
+            if pin == "9682":
+                lcd_message("PIN corect", 1, delay=1)
+                uid = read_rfid()
+                if uid:
+                    result = check_uid_in_db(uid)
+                    if result:
+                        allowed, owner_name = result
+if allowed:
+                            lcd_message("Acces permis", 1, delay=1)
+                            lcd_message("Deschidem usa", 2, delay=1)
+                            acces_permis_feedback()
+                            log_event(uid, "acces permis", f"Seiful a fost deschis de {owner_name}")
+                            set_angle(49)
+                            motor_open = True
+                        else:
+                            lcd_message("UID nepermis", 1, delay=1)
+                            acces_refuzat_feedback()
+                            log_event(uid, "acces refuzat", f"UID nepermis {uid}")
+                    else:
+                        lcd_message("UID necunoscut", 1, delay=1)
+                        acces_refuzat_feedback()
+                        log_event(uid, "acces refuzat", f"UID necunoscut {uid}")
+            else:
+                lcd_message("PIN gresit", 1, delay=1)
+                acces_refuzat_feedback()
+
+        else:
+            lcd_message("Astept inchidere", 1, delay=1)
+            lcd_message("PIN sau RFID", 2)
+            uid = read_rfid()
+            if uid:
+                result = check_uid_in_db(uid)
+                if result:
+                    allowed, owner_name = result
+                    if allowed:
+                        lcd_message("Se inchide usa", 1, delay=1)
+                        acces_permis_feedback()
+                        log_event(uid, "inchidere", f"Usa inchisa de {owner_name}")
+                        set_angle(145)
+                        motor_open = False
+else:
+                        lcd_message("UID nepermis", 1, delay=1)
+                        acces_refuzat_feedback()
+                else:
+                    lcd_message("UID necunoscut", 1, delay=1)
+                    acces_refuzat_feedback()
+            else:
+                pin = read_keypad_pin()
+                if pin == "9682":
+                    lcd_message("PIN corect", 1, delay=1)
+                    lcd_message("Motor inchis", 2, delay=1)
+                    acces_permis_feedback()
+                    log_event("PIN", "inchidere", "Seiful a fost inchis cu PIN")
+                    set_angle(145)
+                    motor_open = False
+                else:
+                    lcd_message("PIN gresit", 1, delay=1)
+                    acces_refuzat_feedback()
+
+
+except KeyboardInterrupt:
+    lcd_message("Sistem oprit", 1, delay=1)
+
+finally:
+    lgpio.gpiochip_close(h)
+    arduino.close()
+    cursor.close()
+    db.close()
+    lcd_message("Oprire finalizata", 1, delay=1)
+
