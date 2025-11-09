@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ro">
+<head>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <meta charset="UTF-8">
+  <title>Login - Seif Access</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f4f4;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    form {
+      background: #fff;
+      padding: 20px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+    }
+    input {
+      margin-bottom: 10px;
+      padding: 8px;
+      width: 100%;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+    }
+    .error { color: red; }
+  </style>
+</head>
+<body>
+  <form method="post">
+    <h2>Autentificare</h2>
+    {% if error %}
+      <p class="error">{{ error }}</p>
+    {% endif %}
+    <input type="text" name="username" placeholder="Username" required>
+    <input type="password" name="password" placeholder="Parola" required>
+    <input type="submit" value="Login">
+  </form>
+</body>
+</html>

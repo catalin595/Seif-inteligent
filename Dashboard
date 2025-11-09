@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ro">
+<head>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <meta charset="UTF-8">
+  <title>Dashboard - Seif Access</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      margin-top: 50px;
+    }
+    .button {
+      padding: 10px 20px;
+      margin: 20px;
+      text-decoration: none;
+      background: #4CAF50;
+      color: white;
+      border-radius: 5px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Dashboard</h1>
+  <p>Bine ai venit!</p>
+  <a class="button" href="{{ url_for('activity') }}">Activity Log</a>
+  <a class="button" href="{{ url_for('rfid') }}">Gestionare RFID</a>
+  <br><br>
+  <a href="{{ url_for('logout') }}">Logout</a>
+</body>
+</html>

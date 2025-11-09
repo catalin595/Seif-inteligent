@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>RFID Manager</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <h2>RFID Carduri</h2>
+    {% if message %}
+        <p>{{ message }}</p>
+    {% endif %}
+    <table border="1">
+        <tr>
+            <th>ID</th>
+            <th>Card UID</th>
+            <th>Utilizator</th>
+            <th>Acces</th>
+            <th>Actiune</th>
+        </tr>
+        {% for card in rfid_cards %}
+        <tr>
+            <td>{{ card.card_id }}</td>
+            <td>{{ card.card_uid }}</td>
+            <td>{{ card.owner_name }}</td>
+            <td style="color: {{ 'green' if card.allowed == 1 else 'red' }};">
+                {{ 'Permis' if card.allowed == 1 else 'Refuzat' }}
+            </td>
+            <td>
+                <form method="POST" style="display:inline;">
+                    <input type="hidden" name="card_id" value="{{ card.card_id }}">
+                    {% if card.allowed == 1 %}
+                        <button type="submit" name="action" value="disallow">Refuza</button>
+                    {% else %}
+                        <button type="submit" name="action" value="allow">Permite</button>
+                    {% endif %}
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+    <br>
+    <a href="{{ url_for('dashboard') }}">Inapoi la Dashboard</a>
+</body>
+</html>
